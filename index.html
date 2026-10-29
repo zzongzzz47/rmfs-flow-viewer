@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RMFS 흐름 관찰기</title>
+</head>
+<body style="margin:0">
+<title>RMFS 흐름 관찰기</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f5f4ef; --panel:#ffffff; --ink:#1f242c; --ink2:#5b6470; --ink3:#9aa3ae; --line:#e2e0d8;
+  --count:#2a78d6; --time:#eb6834; --hot:#eb6834;
+  --s1:#8a97ad; --s2:#d9a441; --s3:#2a78d6; --s4:#1baf7a;
+  --lock:#c94b3f; --podA:#6f86a6; --podB:#adbdd1; --podC:#e4e9f0; --podink:#6b6f76; --amr:#1f242c; --station:#e9eef7; --ring:#2a78d6;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#15181d; --panel:#1d2127; --ink:#e8e9ec; --ink2:#a9b0ba; --ink3:#6f7784; --line:#2c313a;
+    --podA:#7a90b0; --podB:#4f5d72; --podC:#31373f; --podink:#b3b8c2; --amr:#f1f2f4; --station:#26304a; --lock:#e0645a; --ring:#7fb1f0;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#15181d; --panel:#1d2127; --ink:#e8e9ec; --ink2:#a9b0ba; --ink3:#6f7784; --line:#2c313a;
+  --podA:#7a90b0; --podB:#4f5d72; --podC:#31373f; --podink:#b3b8c2; --amr:#f1f2f4; --station:#26304a; --lock:#e0645a; --ring:#7fb1f0;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans KR",-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:14px;line-height:1.5;padding-inline:16px;padding-block:12px 32px;max-width:1280px;margin:0 auto}
+h1{font-size:18px;font-weight:600;margin:0}
+.sub{color:var(--ink2);margin:2px 0 10px;font-size:13px}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+.bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-end;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+.ctl{display:flex;flex-direction:column;gap:3px;min-width:104px}
+.ctl label{font-size:11px;letter-spacing:.04em;color:var(--ink2)}
+.ctl select{font:inherit;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);width:100%}
+.ctl input[type=range]{width:100%}
+.ctl .val{font-size:12px;color:var(--ink)}
+.btns{display:flex;gap:6px;margin-left:auto}
+button{font:inherit;font-size:13px;padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);cursor:pointer}
+button.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--count);outline-offset:2px}
+.grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:12px}
+@media (max-width:860px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+.panel h2{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink2);margin:0 0 8px;font-weight:600}
+canvas{width:100%;height:auto;display:block;border-radius:6px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 14px;font-size:12px;color:var(--ink2);margin-top:8px}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+.lanes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.lane{border:1px solid var(--line);border-radius:6px;padding:6px;min-height:84px;max-height:150px;overflow:auto}
+.lane h3{font-size:11px;margin:0 0 4px;color:var(--ink2);font-weight:500;display:flex;justify-content:space-between}
+.lane h3 b{color:var(--ink);font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:11px;padding:1px 6px;border-radius:10px;border:1px solid var(--line);color:var(--ink);background:var(--bg);white-space:nowrap;cursor:pointer}
+.chip.s1{border-color:var(--s1)}.chip.s2{border-color:var(--s2)}.chip.s3{border-color:var(--s3)}.chip.s4{border-color:var(--s4)}
+.chip.hot{background:color-mix(in srgb,var(--hot) 18%,transparent)}
+.chip.focus{outline:2px solid var(--ring)}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}
+@media (max-width:520px){.tiles{grid-template-columns:repeat(2,1fr)}.lanes{grid-template-columns:repeat(2,1fr)}}
+.tile{border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.tile .k{font-size:11px;color:var(--ink2)}
+.tile .v{font-size:20px;font-weight:500;line-height:1.2}
+.tile .u{font-size:11px;color:var(--ink3)}
+.tl{margin-top:10px}
+.row{display:grid;grid-template-columns:44px 1fr 48px;align-items:center;gap:6px;margin:3px 0;font-size:11px}
+.row .id{color:var(--ink2)}
+.row.focus .id{color:var(--ring);font-weight:600}
+.row .stack{display:flex;height:12px;border-radius:3px;overflow:hidden;background:var(--line)}
+.row .stack i{display:block;height:100%}
+.row .ft{text-align:right;color:var(--ink2)}
+.log{list-style:none;margin:0;padding:0;font-size:12px}
+.log li{padding:3px 0;border-bottom:1px dashed var(--line);color:var(--ink2)}
+.log li:first-child{color:var(--ink)}
+.log .t{color:var(--ink3);margin-right:6px}
+.qp{margin-top:10px;border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.qp h3{font-size:11px;margin:0 0 6px;color:var(--ink2);font-weight:500;display:flex;justify-content:space-between}
+.qp h3 b{color:var(--ink);font-weight:600}
+.qrow{display:grid;grid-template-columns:82px 1fr;align-items:center;gap:6px;margin:3px 0;font-size:11px}
+.qrow .qs{color:var(--ink2)}
+.qrow .qs.lk{color:var(--lock);font-weight:600}
+.qrow .qc{display:flex;flex-wrap:wrap;gap:4px;min-height:20px}
+.qrow .qe{color:var(--ink3)}
+.qchip{position:relative;font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);color:var(--ink);background:var(--bg);white-space:nowrap;overflow:hidden}
+.qchip.pk{background:var(--s4);border-color:var(--s4);color:#fff}
+.qchip.pk i{position:absolute;left:0;bottom:0;height:3px;background:rgba(255,255,255,.85)}
+.qchip.wt{background:color-mix(in srgb,var(--s3) 28%,var(--panel));border-color:var(--s3)}
+.qchip.in{background:transparent;border-color:var(--s3);color:var(--ink2)}
+.qchip.pd{background:transparent;border-style:dashed;color:var(--ink3)}
+.qchip.rt{opacity:.45}
+.qchip.hot{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--hot) 60%,transparent)}
+.qchip.fc{outline:2px solid var(--ring)}
+.qsep{color:var(--ink3);font-size:10px;align-self:center}
+.note{font-size:12px;color:var(--ink2);margin-top:8px}
+.note b{color:var(--ink);font-weight:600}
+table.st{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+table.st th{font-weight:500;color:var(--ink2);text-align:left;padding:2px 4px;border-bottom:1px solid var(--line)}
+table.st td{padding:2px 4px;border-bottom:1px dashed var(--line)}
+table.st td.lk{color:var(--lock);font-weight:600}
+.focusbox{margin-top:8px;font-size:12px;color:var(--ink2);border:1px dashed var(--line);border-radius:6px;padding:6px 8px}
+.focusbox b{color:var(--ink)}
+</style>
+
+<h1>RMFS 흐름 관찰기</h1>
+<p class="sub">논문 실험 환경 그대로: 작업대 6, AMR 30, Pod 272, SKU 2,000(ABC 구역 저장, 복제 3), 상품군 100, LEGACY_SAFE 규칙(작업대 잠김·한 번에 작업대당 한 대 배정·배치 마지막 피킹 완료). 주문 하나를 클릭하면 그 주문의 Pod와 시간 구간을 따라간다.</p>
+
+<div class="bar">
+  <div class="ctl"><label for="B">작업대 용량 B</label><select id="B"><option>4</option><option selected>8</option><option>12</option></select></div>
+  <div class="ctl"><label for="rho">상대부하 ρ (λ = 21ρ/분)</label><select id="rho"><option>0.5</option><option selected>0.7</option><option>0.85</option><option>0.95</option></select></div>
+  <div class="ctl"><label for="scv">도착 불규칙성 SCV</label><select id="scv"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select></div>
+  <div class="ctl"><label for="p">집중도 p</label><select id="p"><option>0.01</option><option selected>0.4</option><option>0.8</option></select></div>
+  <div class="ctl"><label for="policy">투입 정책</label><select id="policy"><option value="immediate">즉시투입</option><option value="count" selected>Count</option><option value="time">Time</option></select></div>
+  <div class="ctl"><label for="kappa">누적수준 (q/B)</label><select id="kappa"><option value="0.0833333">0.5B</option><option value="0.1666667" selected>1B</option><option value="0.25">1.5B</option><option value="0.5">3B</option><option value="1">6B</option></select><span class="val mono" id="qT">q = 8 · T = 32.7초</span></div>
+  <div class="ctl"><label for="unlock">작업대 해제</label><select id="unlock"><option value="return" selected>Pod 복귀 후 (LEGACY_SAFE)</option><option value="pick">마지막 피킹 후 (ENHANCED의 일부)</option></select></div>
+  <div class="ctl"><label for="done">완료 시점</label><select id="done"><option value="batch" selected>배치 마지막 피킹</option><option value="order">주문 자신의 마지막 피킹</option></select></div>
+  <div class="ctl"><label for="speed">재생 속도</label><input id="speed" type="range" min="1" max="60" value="10"><span class="val">×<b id="speedv" class="mono">10</b></span></div>
+  <div class="btns"><button id="play" class="primary">일시정지</button><button id="step">10초 진행</button><button id="reset">초기화</button></div>
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <h2>창고 — 실행 <span id="repv" class="mono">1</span> · 시각 <span id="clock" class="mono">0:00</span> · 지배 상품군 <span id="fam" class="mono">–</span></h2>
+    <canvas id="cv" width="900" height="640"></canvas>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--podA)"></i>A급 구역 Pod</span>
+      <span><i class="sw" style="background:var(--podB)"></i>B급</span>
+      <span><i class="sw" style="background:var(--podC)"></i>C급</span>
+      <span><i class="sw" style="background:var(--hot)"></i>지배 상품군 SKU를 담은 Pod</span>
+      <span>Pod 위 숫자 = 그 Pod 한 번 방문으로 처리할 라인 수</span>
+      <span><i class="sw" style="background:var(--amr);border-radius:50%"></i>AMR (테두리만 = 공차, 채움 = Pod 운반)</span>
+      <span><i class="sw" style="border:2px solid var(--lock);background:transparent"></i>작업대 잠김</span>
+      <span><i class="sw" style="border:2px solid var(--ring);background:transparent"></i>추적 중인 주문의 Pod</span>
+      <span>작업대 바깥쪽 AMR 세로 줄 = 도착 순서(맨 위가 피킹 중)</span>
+    </div>
+    <table class="st" id="sttab"></table>
+    <div class="qp"><h3><span>작업대 앞 Pod 줄 — 왼쪽부터 처리 순서 (Pod 번호·라인 수)</span><b>대기 Pod 합계 <span id="qtot" class="mono">0</span></b></h3>
+      <div class="legend" style="margin:0 0 6px"><span><i class="sw" style="background:var(--s4)"></i>피킹 중 (아래 막대 = 진행)</span><span><i class="sw" style="background:color-mix(in srgb,var(--s3) 28%,var(--panel));border:1px solid var(--s3)"></i>도착해 기다림</span><span><i class="sw" style="border:1px solid var(--s3);background:transparent"></i>AMR이 실어 오는 중</span><span><i class="sw" style="border:1px dashed var(--ink3);background:transparent"></i>AMR 미배정</span><span><i class="sw" style="background:var(--line);opacity:.45"></i>복귀 중 (잠김 해제 대기)</span></div>
+      <div id="qpanel"></div></div>
+  </div>
+  <div class="panel">
+    <h2>주문이 지금 어디에 있나</h2>
+    <div class="lanes">
+      <div class="lane"><h3>① 투입 대기 <b id="n1">0</b></h3><div class="chips" id="l1"></div></div>
+      <div class="lane"><h3>② 배정 후보 <b id="n2">0</b></h3><div class="chips" id="l2"></div></div>
+      <div class="lane"><h3>③④ 작업대 처리 <b id="n3">0</b></h3><div class="chips" id="l3"></div></div>
+      <div class="lane"><h3>완료 <b id="n4">0</b></h3><div class="chips" id="l4"></div></div>
+    </div>
+    <div class="focusbox" id="focus">주문 칩을 클릭하면 여기에 그 주문의 라인·Pod·시간 구간이 나온다.</div>
+    <div class="tiles">
+      <div class="tile"><div class="k">평균 완료시간</div><div class="v mono" id="mflow">–</div><div class="u">초 · P95 <span id="p95" class="mono">–</span></div></div>
+      <div class="tile"><div class="k">주문당 AMR 이동</div><div class="v mono" id="mdist">–</div><div class="u">m · 공차 <span id="mempty" class="mono">–</span></div></div>
+      <div class="tile"><div class="k">주문당 Pod 방문</div><div class="v mono" id="mvis">–</div><div class="u">배치 크기 <span id="mbatch" class="mono">–</span></div></div>
+      <div class="tile"><div class="k">AMR 이용률</div><div class="v mono" id="mutil">–</div><div class="u">작업대 피킹 <span id="mpick" class="mono">–</span> · 잠김 <span id="mlock" class="mono">–</span></div></div>
+    </div>
+    <div class="tl">
+      <h2 style="margin-top:12px">최근 완료 주문의 시간 구간</h2>
+      <div class="legend" style="margin:0 0 6px">
+        <span><i class="sw" style="background:var(--s1)"></i>① 투입 대기</span>
+        <span><i class="sw" style="background:var(--s2)"></i>② 배정 후보 대기</span>
+        <span><i class="sw" style="background:var(--s3)"></i>③ 배정→첫 피킹</span>
+        <span><i class="sw" style="background:var(--s4)"></i>④ 첫 피킹→완료</span>
+      </div>
+      <div id="rows"></div>
+    </div>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:12px">
+  <div class="panel">
+    <h2>지금 일어나는 일</h2>
+    <ul class="log" id="log"></ul>
+  </div>
+  <div class="panel">
+    <h2>보는 법</h2>
+    <p class="note"><b>Pod 공유:</b> 작업대가 배치를 받는 순간 Pod 위에 숫자가 뜬다. 그 Pod 한 번 방문으로 처리하는 주문 수다. p를 0.8로, Count 1B로 두면 주황 Pod에 2~4가 자주 보인다. 이것이 이동거리가 줄어드는 유일한 경로다.</p>
+    <p class="note"><b>③ 배정→첫 피킹이 긴 이유:</b> Pod을 실어 오는 시간보다 작업대 앞 줄서기가 길다. 작업대는 Pod을 한 번에 하나만 처리하므로, 배치의 Pod 10개가 오면 마지막 Pod은 앞의 아홉이 피킹을 마칠 때까지 기다린다. 아래 "작업대 앞 Pod 줄"에서 Count 1B로 바꾸면 줄이 길어지고 "대기 Pod 합계"가 뛰는 것을 볼 수 있다.</p>
+    <p class="note"><b>AMR 배정 규칙:</b> 배정은 "깨어날 때"(배치 생성, Pod 복귀)마다 작업대당 한 건씩만 된다. 그래서 배치의 Pod 10개가 한꺼번에 출발하지 않고 하나씩 풀려 나간다. 큰 배치일수록 ③④가 길어지는 이유의 절반이 여기 있다.</p>
+    <p class="note"><b>작업대 잠김:</b> 표의 "잠김"이 켜진 동안 그 작업대는 새 배치를 받지 못한다. LEGACY_SAFE에서는 마지막 Pod가 집에 돌아가야 풀린다. "마지막 피킹 후" 토글은 시뮬레이터 ENHANCED 모드의 네 가지 차이 중 이 하나만 바꾼다(AMR 전역 짝짓기·Pod 동점 규칙은 LEGACY 그대로). 논문 실험은 전부 LEGACY_SAFE다.</p>
+    <p class="note"><b>완료 시점:</b> 배치 마지막 피킹 규칙이면 먼저 끝난 주문도 같은 배치의 남은 Pod를 기다린 것으로 계산된다. 추적 중인 주문의 "자기 마지막 피킹"과 "완료"가 벌어지는 만큼이 그 규칙의 몫이다.</p>
+    <p class="note"><b>고부하 서비스 지렛대:</b> ρ 0.95·p 0.4에서 즉시투입과 Count 0.5B를 번갈아 초기화해 3~4분씩 보면, ②가 짧아져 평균이 낮아지는 쪽이 Count다. 짧은 시간의 난수라 몇 번 반복해야 보인다.</p>
+    <p class="note">수치는 난수와 짧은 관찰 시간 때문에 논문 표(1.6시간 × 20회 평균)와 다르다. 방향을 보는 도구다.</p>
+  </div>
+</div>
+
+<script>
+const HOMES=[[0,0],[1,0],[2,0],[3,0],[0,1],[1,1],[2,1],[3,1],[6,0],[7,0],[8,0],[9,0],[10,0],[6,1],[7,1],[8,1],[9,1],[10,1],[12,0],[13,0],[14,0],[16,0],[12,1],[14,1],[15,1],[16,1],[18,0],[19,0],[20,0],[21,0],[22,0],[18,1],[19,1],[20,1],[21,1],[0,3],[1,3],[2,3],[3,3],[4,3],[0,4],[2,4],[3,4],[4,4],[6,3],[8,3],[9,3],[10,3],[6,4],[7,4],[8,4],[9,4],[10,4],[13,3],[14,3],[15,3],[16,3],[12,4],[13,4],[14,4],[15,4],[16,4],[19,3],[20,3],[21,3],[22,3],[18,4],[19,4],[20,4],[21,4],[22,4],[0,6],[1,6],[2,6],[3,6],[0,7],[1,7],[2,7],[3,7],[4,7],[6,6],[7,6],[8,6],[9,6],[10,6],[6,7],[8,7],[9,7],[12,6],[16,6],[12,7],[13,7],[14,7],[15,7],[16,7],[19,6],[20,6],[21,6],[22,6],[18,7],[20,7],[21,7],[1,9],[2,9],[3,9],[4,9],[0,10],[1,10],[2,10],[3,10],[4,10],[6,9],[7,9],[8,9],[9,9],[10,9],[7,10],[8,10],[9,10],[10,10],[12,9],[13,9],[15,9],[16,9],[14,10],[18,9],[19,9],[21,9],[22,9],[20,10],[21,10],[22,10],[0,12],[1,12],[2,12],[3,12],[4,12],[0,13],[2,13],[3,13],[4,13],[6,12],[7,12],[8,12],[9,12],[10,12],[7,13],[8,13],[9,13],[10,13],[12,12],[13,12],[14,12],[15,12],[16,12],[12,13],[14,13],[15,13],[16,13],[18,12],[19,12],[20,12],[21,12],[18,13],[19,13],[20,13],[21,13],[22,13],[0,15],[1,15],[2,15],[3,15],[4,15],[0,16],[1,16],[2,16],[3,16],[4,16],[6,15],[7,15],[8,15],[10,15],[6,16],[7,16],[8,16],[9,16],[10,16],[13,15],[14,15],[16,15],[13,16],[14,16],[15,16],[16,16],[18,15],[19,15],[20,15],[21,15],[18,16],[19,16],[20,16],[21,16],[22,16],[0,18],[1,18],[3,18],[4,18],[1,19],[2,19],[3,19],[4,19],[6,18],[7,18],[9,18],[10,18],[6,19],[7,19],[8,19],[9,19],[12,18],[13,18],[14,18],[16,18],[12,19],[13,19],[15,19],[16,19],[18,18],[19,18],[20,18],[21,18],[22,18],[18,19],[19,19],[20,19],[21,19],[0,21],[1,21],[2,21],[3,21],[0,22],[1,22],[2,22],[3,22],[4,22],[7,21],[8,21],[9,21],[10,21],[6,22],[7,22],[8,22],[9,22],[10,22],[12,21],[13,21],[14,21],[15,21],[16,21],[12,22],[13,22],[14,22],[15,22],[16,22],[18,21],[19,21],[20,21],[18,22],[19,22],[20,22],[21,22],[22,22]];
+const ROBOT_STARTS=[[13,4],[16,18],[15,12],[19,3],[1,7],[21,22],[8,12],[14,13],[19,13],[12,7],[7,13],[15,9],[20,10],[21,22],[7,12],[6,7],[20,19],[1,6],[4,19],[16,22],[12,6],[14,7],[19,9],[3,21],[1,10],[20,6],[22,18],[2,6],[8,4],[18,21]];
+
+(function(){
+const $=id=>document.getElementById(id);
+const V=1.3, LOAD=1, UNLOAD=1, PICK_UNIT=2, NSTATION=6, NROBOT=30, NSKU=2000, NFAM=100, REPL=3, REF=21;
+const STATIONS=[[26,5.75],[26,11.5],[26,17.25],[-4,5.75],[-4,11.5],[-4,17.25]].map((p,i)=>({id:i+1,x:p[0],y:p[1]}));
+const CLS_FRAC=[0.2,0.3,0.5], CLS_DEM=[0.7,0.25,0.05];
+let cfg, S, running=true, lastTs=null, focusId=null, fc=0;
+// ---------- static world ----------
+function mhd(a,b){return Math.abs(a.x-b.x)+Math.abs(a.y-b.y)}
+const PODS=HOMES.map((h,i)=>({id:i,x:h[0],y:h[1],skus:[],cls:2}));
+const rank=PODS.map(p=>p.id).sort((a,b)=>Math.min(...STATIONS.map(s=>mhd(PODS[a],s)))-Math.min(...STATIONS.map(s=>mhd(PODS[b],s)))||a-b);
+const SKU_CLS=new Array(NSKU), SKU_PODS=new Array(NSKU), SKU_FAM=new Array(NSKU); let FAM_POOL=[]; let rep=0;
+function buildStorage(){ // 실행(seed)마다 새로: SKU→Pod 배치(ABC 구역 내 무작위 3곳), 상품군 구성
+  for(const p of PODS){p.skus=[];p.cls=2}
+  let lo=0; const bounds=[];
+  for(let c=0;c<3;c++){const hi=c===2?PODS.length:Math.floor((lo/PODS.length+CLS_FRAC[c])*PODS.length);bounds.push([lo,hi]);lo=hi}
+  const nA=Math.floor(NSKU*0.2), nB=Math.floor(NSKU*0.3);
+  for(let s=0;s<NSKU;s++){const c=s<nA?0:(s<nA+nB?1:2);SKU_CLS[s]=c;const pool=rank.slice(bounds[c][0],bounds[c][1]);const chosen=new Set();while(chosen.size<REPL)chosen.add(pool[Math.floor(Math.random()*pool.length)]);SKU_PODS[s]=[...chosen];for(const pid of chosen){PODS[pid].skus.push(s);PODS[pid].cls=Math.min(PODS[pid].cls,c)}}
+  for(let c=0;c<3;c++){const ids=[];for(let s=0;s<NSKU;s++)if(SKU_CLS[s]===c)ids.push(s);for(let i=ids.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[ids[i],ids[j]]=[ids[j],ids[i]]}ids.forEach((s,i)=>SKU_FAM[s]=i%NFAM)}
+  FAM_POOL=[];for(let f=0;f<NFAM;f++)FAM_POOL.push([[],[],[]]);for(let s=0;s<NSKU;s++)FAM_POOL[SKU_FAM[s]][SKU_CLS[s]].push(s);
+}
+// ---------- random ----------
+const rnd=Math.random;
+function norm(){let u=0,v=0;while(u===0)u=rnd();while(v===0)v=rnd();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+function gammaK(k){ // shape k, scale 1
+  if(k<1)return gammaK(k+1)*Math.pow(rnd(),1/k);
+  const d=k-1/3,c=1/Math.sqrt(9*d);for(;;){let x,v;do{x=norm();v=1+c*x}while(v<=0);v=v*v*v;const u=rnd();if(u<1-0.0331*x*x*x*x||Math.log(u)<0.5*x*x+d*(1-v+Math.log(v)))return d*v}}
+function interarrival(){const k=1/cfg.scv;return gammaK(k)*(cfg.mean/k)}
+function pick(vals,probs){let u=rnd();for(let i=0;i<vals.length;i++){u-=probs[i];if(u<=0)return vals[i]}return vals[vals.length-1]}
+// ---------- config ----------
+function cfgRead(){
+  cfg={B:+$('B').value,rho:+$('rho').value,scv:+$('scv').value,p:+$('p').value,policy:$('policy').value,kappa:+$('kappa').value,unlock:$('unlock').value,done:$('done').value,speed:+$('speed').value};
+  cfg.lambda=REF*cfg.rho; cfg.mean=60/cfg.lambda; cfg.q=Math.max(1,Math.round(cfg.kappa*6*cfg.B)); cfg.T=60*cfg.q/cfg.lambda;
+  $('qT').textContent='q = '+cfg.q+' · T = '+cfg.T.toFixed(1)+'초'; $('speedv').textContent=cfg.speed;
+}
+function reset(){
+  cfgRead(); focusId=null; rep++; buildStorage();
+  S={t:0,nextId:1,orders:[],byId:{},pending:[],eligible:[],done:[],log:[],tasks:[],active:[],batches:[],wake:false,nextArrival:1,nextTime:cfg.T,
+     dist:{empty:0,out:0,ret:0},busyRobot:0,lockAcc:0,pickAcc:0,podWaitAcc:0,dom:Math.floor(rnd()*NFAM)};
+  S.stations=STATIONS.map(s=>({...s,batch:null,arrived:[],task:null,availableAt:0,waitStart:null}));
+  const starts=(rep===1)?ROBOT_STARTS:Array.from({length:NROBOT},()=>{const h=PODS[Math.floor(rnd()*PODS.length)];return [h.x,h.y]});
+  S.robots=starts.map((r,i)=>({id:i+1,x:r[0],y:r[1],task:null}));
+  S.pods=PODS.map(p=>({id:p.id,queue:[],active:null,count:0}));
+  S._domPods=new Set(); for(const c of [0,1,2])for(const s of FAM_POOL[S.dom][c])for(const pid of SKU_PODS[s])S._domPods.add(pid);
+  $('fam').textContent='#'+S.dom+' (A '+FAM_POOL[S.dom][0].length+'·B '+FAM_POOL[S.dom][1].length+'·C '+FAM_POOL[S.dom][2].length+' SKU)';
+  log('실행 '+rep+' 시작. λ = '+cfg.lambda.toFixed(1)+'건/분, 지배 상품군 #'+S.dom+', 정책 '+polName()+'. (AMR 출발 위치·SKU 배치·상품군 구성은 실행마다 새로 뽑음)');
+}
+function polName(){return cfg.policy==='immediate'?'즉시투입':(cfg.policy==='count'?'Count q='+cfg.q:'Time T='+cfg.T.toFixed(1)+'초')}
+function log(msg){S.log.unshift({t:S.t,msg});if(S.log.length>8)S.log.length=8}
+function fmt(t){const m=Math.floor(t/60),s=Math.floor(t%60);return m+':'+(s<10?'0':'')+s}
+// ---------- orders ----------
+function newOrder(){
+  const nl=pick([1,2,3],[1/3,1/3,1/3]); const fam=rnd()<cfg.p?S.dom:(()=>{let f=Math.floor(rnd()*(NFAM-1));return f>=S.dom?f+1:f})();
+  const lines=[]; const used=new Set();
+  for(let i=0;i<nl;i++){const c=pick([0,1,2],CLS_DEM);const pool=FAM_POOL[fam][c].filter(s=>!used.has(s));const sku=pool[Math.floor(rnd()*pool.length)];used.add(sku);lines.push({sku,units:pick([1,2,3],[0.5,0.3,0.2]),cls:c})}
+  const o={id:S.nextId++,arrival:S.t,fam,lines,release:null,assign:null,firstPick:null,lastPick:null,completion:null,batch:null,station:null,remainingAlloc:0,pods:[]};
+  S.orders.push(o);S.byId[o.id]=o;S.pending.push(o);
+  log('주문 #'+o.id+' 도착 — '+nl+'줄, 상품군 '+(fam===S.dom?'★지배':'#'+fam));
+  return o;
+}
+function release(reason){if(!S.pending.length)return;const n=S.pending.length;for(const o of S.pending){o.release=S.t;S.eligible.push(o)}S.pending=[];if(reason)log(reason+' → '+n+'건 투입')}
+// ---------- batching + pod plan (greedy max-cover, LEGACY_SAFE ranking) ----------
+function planPods(orders,station){
+  const rem=new Map(); for(const o of orders)for(const l of o.lines)rem.set(o.id+':'+l.sku,{o,sku:l.sku,units:l.units});
+  const plans=[]; const usedPods=new Set();
+  while(rem.size){
+    const cover=new Map(); // pod -> units coverable
+    for(const r of rem.values())for(const pid of SKU_PODS[r.sku]){if(usedPods.has(pid))continue;cover.set(pid,(cover.get(pid)||0)+r.units)}
+    let best=null,bk=null;
+    for(const [pid,u] of cover){const sp=S.pods[pid];const free=(sp.active===null&&sp.queue.length===0)?0:1;const d=mhd(PODS[pid],station);const key=[free,-u,d,rnd()];
+      if(bk===null||key[0]<bk[0]||(key[0]===bk[0]&&(key[1]<bk[1]||(key[1]===bk[1]&&(key[2]<bk[2]||(key[2]===bk[2]&&key[3]<bk[3])))))){best=pid;bk=key}}
+    const allocs=[]; for(const [k,r] of [...rem]){if(SKU_PODS[r.sku].includes(best)){allocs.push({orderId:r.o.id,sku:r.sku,units:r.units});rem.delete(k)}}
+    usedPods.add(best); plans.push({pod:best,allocs});
+  }
+  return plans;
+}
+function assignBatches(){
+  while(S.eligible.length){
+    const free=S.stations.filter(s=>s.batch===null); if(!free.length)break;
+    free.sort((a,b)=>a.availableAt-b.availableAt||a.id-b.id); const st=free[0];
+    const sel=S.eligible.splice(0,Math.min(cfg.B,S.eligible.length));
+    const plans=planPods(sel,st);
+    const batch={id:S.batches.length+1,station:st,orders:sel,tasks:[],remPick:new Set(),remRet:new Set(),lines:sel.reduce((a,o)=>a+o.lines.length,0)};
+    for(const pl of plans){const sp=S.pods[pl.pod];const task={id:S.tasks.length+1,batch,pod:pl.pod,station:st,allocs:pl.allocs,status:'PENDING',robot:null,ready:(sp.active===null&&sp.queue.length===0),t0:0,tPod:0,tArr:0,tPick:0,tFin:0,tRet:0,dE:0,dO:0,dR:0};
+      S.tasks.push(task);S.active.push(task);batch.tasks.push(task);batch.remPick.add(task.id);batch.remRet.add(task.id);sp.queue.push(task);sp.count+=pl.allocs.length;
+      for(const a of pl.allocs){const o=S.byId[a.orderId];o.remainingAlloc++;if(!o.pods.includes(pl.pod))o.pods.push(pl.pod)}}
+    for(const o of sel){o.assign=S.t;o.batch=batch;o.station=st.id}
+    S.batches.push(batch); st.batch=batch; st.waitStart=S.t; S.wake=true;
+    const shared=batch.lines-batch.tasks.length;
+    log('작업대 '+st.id+': '+sel.length+'건 배치 (#'+sel[0].id+'~#'+sel[sel.length-1].id+'), Pod '+batch.tasks.length+'회 방문'+(shared>0?', 공유 '+shared+'줄':''));
+  }
+}
+function dispatch(){ // one task per station per wake-up, nearest idle robot, pod FIFO
+  S.wake=false;
+  const pend=S.active.filter(t=>t.status==='PENDING'); if(!pend.length)return;
+  const idle=S.robots.filter(r=>r.task===null);
+  for(const st of S.stations){
+    const ts=pend.filter(t=>t.station===st).sort((a,b)=>a.id-b.id); if(!ts.length||!idle.length)continue;
+    const task=ts[0]; const sp=S.pods[task.pod]; if(sp.active!==null||sp.queue[0]!==task)continue;
+    let best=null,bd=1e9; for(const r of idle){const d=mhd(r,PODS[task.pod]);if(d<bd||(d===bd&&r.id<best.id)){bd=d;best=r}}
+    idle.splice(idle.indexOf(best),1);
+    task.status='INBOUND';task.robot=best;best.task=task;sp.active=task;
+    task.t0=S.t;task.dE=bd;task.dO=mhd(PODS[task.pod],st);task.dR=task.dO;
+    task.tPod=S.t+task.dE/V;task.tArr=task.tPod+LOAD+task.dO/V;
+    log('AMR '+best.id+' → Pod '+task.pod+' (공차 '+bd.toFixed(0)+' m) → 작업대 '+st.id);
+  }
+}
+function complete(o){o.completion=S.t;S.done.push(o)}
+function tick(dt){
+  S.t+=dt;
+  while(S.t>=S.nextArrival){newOrder();S.nextArrival+=Math.max(0.05,interarrival());
+    if(cfg.policy==='immediate')release(null);
+    else if(cfg.policy==='count'&&S.pending.length>=cfg.q)release('Count: '+cfg.q+'건 모임')}
+  if(cfg.policy==='immediate')release(null);
+  else if(cfg.policy==='count'){if(S.pending.length>=cfg.q)release('Count: '+cfg.q+'건 모임')}
+  else if(S.t>=S.nextTime){release('Time: '+cfg.T.toFixed(0)+'초 경과');S.nextTime+=cfg.T}
+  assignBatches();
+  // events
+  for(const task of S.active){
+    if(task.status==='INBOUND'&&S.t>=task.tArr){task.status='ARRIVED';task.station.arrived.push(task)}
+  }
+  for(const st of S.stations){
+    if(st.task===null&&st.arrived.length){st.arrived.sort((a,b)=>a.tArr-b.tArr||a.id-b.id);const task=st.arrived.shift();st.task=task;task.status='PICKING';task.tPick=S.t;
+      const units=task.allocs.reduce((a,x)=>a+x.units,0);task.tFin=S.t+units*PICK_UNIT;
+      if(st.waitStart!==null){S.podWaitAcc+=S.t-st.waitStart;st.waitStart=null}
+      for(const a of task.allocs){const o=S.byId[a.orderId];if(o.firstPick===null)o.firstPick=S.t}
+      log('작업대 '+st.id+': Pod '+task.pod+' 피킹 시작 — 주문 '+[...new Set(task.allocs.map(a=>'#'+a.orderId))].join(',')+' ('+units*PICK_UNIT+'초)')}
+    if(st.task&&S.t>=st.task.tFin){const task=st.task;st.task=null;task.status='RETURNING';task.tRet=task.tFin+task.dR/V+UNLOAD;
+      const b=task.batch;b.remPick.delete(task.id);
+      for(const a of task.allocs){const o=S.byId[a.orderId];o.lastPick=S.t;o.remainingAlloc--;if(cfg.done==='order'&&o.remainingAlloc===0&&o.completion===null)complete(o)}
+      if(b.remPick.size===0){for(const o of b.orders)if(o.completion===null)complete(o);if(cfg.unlock==='pick'){st.batch=null;st.availableAt=S.t;st.waitStart=null;log('작업대 '+st.id+' 해제 (마지막 피킹)')}}
+      else st.waitStart=S.t}
+    if(st.batch)S.lockAcc+=dt; if(st.task)S.pickAcc+=dt;
+  }
+  let released=[];
+  for(const task of S.active){
+    if(task.status==='RETURNING'&&S.t>=task.tRet){task.status='DONE';const r=task.robot;r.task=null;r.x=PODS[task.pod].x;r.y=PODS[task.pod].y;
+      S.dist.empty+=task.dE;S.dist.out+=task.dO;S.dist.ret+=task.dR;
+      const sp=S.pods[task.pod];sp.active=null;sp.queue.shift();sp.count-=task.allocs.length;if(sp.queue.length)sp.queue[0].ready=true;
+      const b=task.batch;b.remRet.delete(task.id);if(cfg.unlock==='return'&&b.remRet.size===0)released.push(b);S.wake=true}
+  }
+  S.active=S.active.filter(t=>t.status!=='DONE');
+  if(S.wake)dispatch();
+  for(const b of released){if(b.station.batch===b){b.station.batch=null;b.station.availableAt=S.t;b.station.waitStart=null;log('작업대 '+b.station.id+' 해제 (Pod 복귀 완료)')}}
+  S.busyRobot+=S.robots.filter(r=>r.task).length*dt;
+}
+// ---------- robot position for drawing ----------
+function robotPos(r){
+  const t=r.task; if(!t)return {x:r.x,y:r.y,loaded:false};
+  const pod=PODS[t.pod], st=t.station;
+  if(t.status==='INBOUND'){
+    if(S.t<t.tPod)return {...lerpM({x:r.x,y:r.y},pod,(S.t-t.t0)/Math.max(1e-6,t.tPod-t.t0)),loaded:false};
+    if(S.t<t.tPod+LOAD)return {x:pod.x,y:pod.y,loaded:true};
+    return {...lerpM(pod,st,(S.t-t.tPod-LOAD)/Math.max(1e-6,t.tArr-t.tPod-LOAD)),loaded:true};
+  }
+  if(t.status==='ARRIVED'||t.status==='PICKING')return {x:st.x,y:st.y,loaded:true};
+  if(t.status==='RETURNING'){const f=(S.t-t.tFin)/Math.max(1e-6,t.tRet-UNLOAD-t.tFin);return {...lerpM(st,pod,Math.min(1,f)),loaded:true}}
+  return {x:r.x,y:r.y,loaded:false};
+}
+function lerpM(a,b,f){ // manhattan path: x first then y
+  f=Math.max(0,Math.min(1,f)); const dx=Math.abs(b.x-a.x),dy=Math.abs(b.y-a.y),tot=dx+dy; if(tot===0)return {x:a.x,y:a.y};
+  const d=f*tot; if(d<=dx)return {x:a.x+Math.sign(b.x-a.x)*d,y:a.y}; return {x:b.x,y:a.y+Math.sign(b.y-a.y)*(d-dx)};
+}
+// ---------- render ----------
+const cv=$('cv'),ctx=cv.getContext('2d');
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const SC=26, OX=6.5, OY=1.2; const P=(x,y)=>[(x+OX)*SC,(y+OY)*SC];
+function draw(){
+  const C={podA:css('--podA'),podB:css('--podB'),podC:css('--podC'),hot:css('--hot'),ink:css('--ink'),ink2:css('--ink2'),ink3:css('--ink3'),line:css('--line'),station:css('--station'),lock:css('--lock'),amr:css('--amr'),panel:css('--panel'),ring:css('--ring'),s3:css('--s3'),s4:css('--s4')};
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const fo=focusId!==null?S.byId[focusId]:null; const fpods=fo?new Set(fo.pods):new Set();
+  const domSet=S._domPods;
+  ctx.font='9px IBM Plex Mono, monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(const p of PODS){const [x,y]=P(p.x,p.y); const sp=S.pods[p.id]; const away=sp.active!==null&&sp.active.status!=='PENDING';
+    ctx.fillStyle=domSet.has(p.id)?C.hot:(p.cls===0?C.podA:(p.cls===1?C.podB:C.podC)); ctx.globalAlpha=away?0.25:1; ctx.fillRect(x-10,y-10,20,20); ctx.globalAlpha=1;
+    if(sp.count>0){ctx.fillStyle=(domSet.has(p.id)||p.cls===0)?'#fff':C.ink;ctx.font='bold 10px IBM Plex Mono, monospace';ctx.fillText(String(sp.count),x,y);ctx.font='9px IBM Plex Mono, monospace'}
+    if(fpods.has(p.id)){ctx.lineWidth=2;ctx.strokeStyle=C.ring;ctx.strokeRect(x-12,y-12,24,24)}}
+  for(const st of S.stations){const [x,y]=P(st.x,st.y); ctx.fillStyle=C.station; ctx.fillRect(x-22,y-40,44,80); ctx.lineWidth=3; ctx.strokeStyle=st.batch?C.lock:C.line; ctx.strokeRect(x-22,y-40,44,80);
+    ctx.fillStyle=C.ink; ctx.font='11px IBM Plex Sans KR, sans-serif'; ctx.fillText('작업대 '+st.id,x,y-52);
+    if(st.batch){const b=st.batch;ctx.font='10px IBM Plex Mono, monospace';ctx.fillStyle=C.ink2;ctx.fillText(b.orders.length+'건',x,y-24);ctx.fillStyle=C.ink;ctx.fillText((b.tasks.length-b.remPick.size)+'/'+b.tasks.length,x,y-8);
+      if(st.task){ctx.fillStyle=C.s4;ctx.fillText('피킹',x,y+10)}else if(st.arrived.length){ctx.fillStyle=C.s3;ctx.fillText('줄 '+st.arrived.length,x,y+10)}else{ctx.fillStyle=C.ink3;ctx.fillText('Pod 대기',x,y+10)}
+      if(fo&&fo.station===st.id){ctx.lineWidth=2;ctx.strokeStyle=C.ring;ctx.strokeRect(x-25,y-43,50,86)}}
+    else{ctx.font='10px IBM Plex Sans KR, sans-serif';ctx.fillStyle=C.ink3;ctx.fillText('비어 있음',x,y)}}
+  const slot=new Map(); for(const st of S.stations){const line=(st.task?[st.task]:[]).concat([...st.arrived].sort((a,b)=>a.tArr-b.tArr||a.id-b.id));line.forEach((t,i)=>slot.set(t.id,i))}
+  for(const r of S.robots){const q=robotPos(r);let [x,y]=P(q.x,q.y);const isF=fo&&r.task&&r.task.allocs.some(a=>a.orderId===fo.id);
+    if(r.task&&slot.has(r.task.id)){x+=r.task.station.x>0?31:-31;y+=Math.min(slot.get(r.task.id),5)*14-36}
+    if(q.loaded){ctx.fillStyle=domSet.has(r.task.pod)?C.hot:C.podA;ctx.fillRect(x-8,y-8,16,16)}
+    ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.lineWidth=isF?3:1.5;ctx.strokeStyle=isF?C.ring:C.amr;ctx.fillStyle=q.loaded?C.amr:C.panel;ctx.fill();ctx.stroke()}
+  ctx.textAlign='left';ctx.font='11px IBM Plex Sans KR, sans-serif';ctx.fillStyle=C.ink2;ctx.fillText('투입 대기 '+S.pending.length+' · 배정 후보 '+S.eligible.length+' · AMR 바쁨 '+S.robots.filter(r=>r.task).length+'/30 · 작업대 앞 대기 Pod '+S.stations.reduce((a,st)=>a+st.arrived.length,0),12,14);
+}
+function chip(o,cls){const hot=o.fam===S.dom;return '<span class="chip '+cls+(hot?' hot':'')+(o.id===focusId?' focus':'')+'" data-id="'+o.id+'">#'+o.id+'</span>'}
+function stats(){
+  const el=(id,v)=>$(id).textContent=v;
+  el('clock',fmt(S.t)); el('repv',rep); $('n1').textContent=S.pending.length; $('n2').textContent=S.eligible.length;
+  const inproc=S.orders.filter(o=>o.assign!==null&&o.completion===null); $('n3').textContent=inproc.length; $('n4').textContent=S.done.length;
+  $('l1').innerHTML=S.pending.slice(-30).map(o=>chip(o,'s1')).join(''); $('l2').innerHTML=S.eligible.slice(0,30).map(o=>chip(o,'s2')).join('');
+  $('l3').innerHTML=inproc.map(o=>chip(o,o.firstPick===null?'s3':'s4')).join(''); $('l4').innerHTML=S.done.slice(-12).map(o=>chip(o,'')).join('');
+  const done=S.done.slice(-60), n=done.length;
+  if(n){const fl=done.map(o=>o.completion-o.arrival).sort((a,b)=>a-b);el('mflow',(fl.reduce((a,b)=>a+b,0)/n).toFixed(0));el('p95',fl[Math.min(n-1,Math.floor(0.95*n))].toFixed(0))}
+  const dn=S.done.length; if(dn){const tot=S.dist.empty+S.dist.out+S.dist.ret;el('mdist',(tot/dn).toFixed(1));el('mempty',(S.dist.empty/dn).toFixed(1))}
+  const bs=S.batches; if(bs.length){el('mbatch',(bs.reduce((a,b)=>a+b.orders.length,0)/bs.length).toFixed(2));el('mvis',(bs.reduce((a,b)=>a+b.tasks.length,0)/bs.reduce((a,b)=>a+b.orders.length,0)).toFixed(2))}
+  if(S.t>0){el('mutil',Math.round(100*S.busyRobot/(NROBOT*S.t))+'%');el('mpick',Math.round(100*S.pickAcc/(NSTATION*S.t))+'%');el('mlock',Math.round(100*S.lockAcc/(NSTATION*S.t))+'%')}
+  const last=S.done.slice(-10).reverse(); const mx=Math.max(30,...last.map(o=>o.completion-o.arrival));
+  $('rows').innerHTML=last.map(o=>{const s=[o.release-o.arrival,o.assign-o.release,o.firstPick-o.assign,o.completion-o.firstPick];
+    return '<div class="row'+(o.id===focusId?' focus':'')+'"><span class="id mono">#'+o.id+'</span><div class="stack">'+s.map((v,i)=>'<i style="width:'+(100*v/mx)+'%;background:var(--s'+(i+1)+')" title="'+v.toFixed(0)+'초"></i>').join('')+'</div><span class="ft mono">'+(o.completion-o.arrival).toFixed(0)+'초</span></div>'}).join('');
+  $('log').innerHTML=S.log.map(l=>'<li><span class="t mono">'+fmt(l.t)+'</span>'+l.msg+'</li>').join('');
+  $('sttab').innerHTML='<tr><th>작업대</th><th>상태</th><th>배치</th><th>Pod 진행</th><th>AMR 미배정</th><th>줄</th></tr>'+S.stations.map(st=>{const b=st.batch;const pend=b?b.tasks.filter(t=>t.status==='PENDING').length:0;
+    return '<tr><td>'+st.id+'</td><td class="'+(b?'lk':'')+'">'+(b?'잠김':'비어 있음')+'</td><td>'+(b?b.orders.length+'건':'–')+'</td><td class="mono">'+(b?(b.tasks.length-b.remPick.size)+' 피킹 / '+(b.tasks.length-b.remRet.size)+' 복귀 / '+b.tasks.length:'–')+'</td><td class="mono">'+(b?pend:'–')+'</td><td class="mono">'+(b?st.arrived.length+(st.task?' +피킹':''):'–')+'</td></tr>'}).join('');
+  const fo=focusId!==null?S.byId[focusId]:null;
+  const fpods=fo?new Set(fo.pods):new Set(); const domPods=S._domPods||new Set();
+  const qchip=(t,cls,extra)=>'<span class="qchip '+cls+(domPods.has(t.pod)?' hot':'')+(fpods.has(t.pod)?' fc':'')+'" title="'+extra+'">P'+t.pod+'·'+t.allocs.length+(cls==='pk'?'<i style="width:'+Math.round(100*Math.min(1,(S.t-t.tPick)/Math.max(1e-6,t.tFin-t.tPick)))+'%"></i>':'')+'</span>';
+  $('qtot').textContent=S.stations.reduce((a,st)=>a+st.arrived.length,0);
+  $('qpanel').innerHTML=S.stations.map(st=>{const b=st.batch; let html='';
+    if(!b)html='<span class="qe">비어 있음</span>';
+    else{const parts=[];
+      if(st.task)parts.push(qchip(st.task,'pk','피킹 중 · 주문 '+[...new Set(st.task.allocs.map(a=>'#'+a.orderId))].join(',')));
+      for(const t of [...st.arrived].sort((a,b)=>a.tArr-b.tArr||a.id-b.id))parts.push(qchip(t,'wt','도착해 기다림 '+(S.t-t.tArr).toFixed(0)+'초 · 주문 '+[...new Set(t.allocs.map(a=>'#'+a.orderId))].join(',')));
+      const inb=b.tasks.filter(t=>t.status==='INBOUND').sort((a,b)=>a.tArr-b.tArr); const pend=b.tasks.filter(t=>t.status==='PENDING').sort((a,b)=>a.id-b.id); const ret=b.tasks.filter(t=>t.status==='RETURNING');
+      if(inb.length&&parts.length)parts.push('<span class="qsep">|</span>'); for(const t of inb)parts.push(qchip(t,'in','AMR '+t.robot.id+'이 실어 오는 중 · 도착까지 '+(t.tArr-S.t).toFixed(0)+'초'));
+      if(pend.length&&parts.length)parts.push('<span class="qsep">|</span>'); for(const t of pend)parts.push(qchip(t,'pd',(S.pods[t.pod].queue[0]!==t||S.pods[t.pod].active)?'Pod이 다른 작업대에 잡혀 있음':'AMR 배정 대기'));
+      if(ret.length&&parts.length)parts.push('<span class="qsep">|</span>'); for(const t of ret)parts.push(qchip(t,'rt','복귀 중 (잠김 해제 대기)'));
+      html=parts.join('')}
+    return '<div class="qrow"><span class="qs'+(b?' lk':'')+'">작업대 '+st.id+(b?' · '+b.orders.length+'건':'')+'</span><div class="qc">'+html+'</div></div>'}).join('');
+  if(fo){const seg=(a,b)=>(a!==null&&b!==null)?(b-a).toFixed(0)+'초':'…';
+    $('focus').innerHTML='<b>주문 #'+fo.id+'</b> · 상품군 '+(fo.fam===S.dom?'★지배':'#'+fo.fam)+' · 라인 '+fo.lines.map(l=>'SKU'+l.sku+'('+'ABC'[l.cls]+'×'+l.units+')').join(', ')+
+      (fo.pods.length?' · Pod '+fo.pods.join(', ')+' · 작업대 '+fo.station:'')+
+      '<br>① 투입 대기 '+seg(fo.arrival,fo.release)+' · ② 배정 후보 대기 '+seg(fo.release,fo.assign)+' · ③ 배정→첫 피킹 '+seg(fo.assign,fo.firstPick)+' · ④ 첫 피킹→완료 '+seg(fo.firstPick,fo.completion)+
+      (fo.lastPick!==null&&fo.completion!==null?' · 자기 마지막 피킹→완료 '+(fo.completion-fo.lastPick).toFixed(0)+'초 (배치 규칙의 몫)':'')}
+}
+function frame(ts){
+  if(lastTs===null)lastTs=ts; let dt=(ts-lastTs)/1000; lastTs=ts; if(dt>0.1)dt=0.1;
+  if(running){let sim=dt*cfg.speed;while(sim>0){const h=Math.min(0.1,sim);tick(h);sim-=h}}
+  draw(); if((++fc%4)===0)stats(); requestAnimationFrame(frame);
+}
+['B','rho','scv','p','policy','kappa','unlock','done','speed'].forEach(id=>$(id).addEventListener('change',()=>{const structural=['B','rho','scv','p'].includes(id);const oldT=cfg.T;cfgRead();if(structural)reset();else{if(cfg.T!==oldT)S.nextTime=S.t+cfg.T;log('정책 변경 → '+polName())}}));
+$('speed').addEventListener('input',cfgRead);
+$('play').addEventListener('click',()=>{running=!running;$('play').textContent=running?'일시정지':'재생'});
+$('step').addEventListener('click',()=>{running=false;$('play').textContent='재생';for(let i=0;i<100;i++)tick(0.1)});
+$('reset').addEventListener('click',()=>reset());
+document.addEventListener('click',e=>{const c=e.target.closest('.chip');if(c){const id=+c.dataset.id;focusId=(focusId===id)?null:id}});
+reset(); requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>
